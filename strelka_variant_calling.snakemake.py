@@ -1,130 +1,194 @@
-# Run oncotator on G89 patient and PDX
+# Run strelka on multicentric GBM
 # 27 September 2016
 # Julia X.M. Yin
 
 
-configfile: "./config.yaml"
-
-SAMPLE_LIST = ["G52.primary", "G53TissueDNA"]
+configfile: "/home/julyin/analysis/template_scripts/config.yaml"
 
 # Adjust these variables
-NORMAL = "G53controlDNA"
-#G52 = "G52.primary"
-#G53 = "G53.primary"
-TUMOUR = "primary"
+SAMPLE_PRIM_LIST = ['DI', 'JG', 'WG']
+SAMPLE_RECUR_LIST = ['EW', 'PM', 'RH']
+
+NORMAL = "normal"
+PRIMARY = "primary"
+RECURRENT = "recurrent"
+
 BAM_DIR = "/share/ScratchGeneral/julyin/cabaret/run/phase2/"
-VCF_DIR = "/home/julyin/genome_gbm_variant_calling/mutect2/"
-ANNOTATED_DIR = "/home/julyin/genome_gbm_variant_calling/mutect2_oncotator/"
+RAW_DIR = "/share/ClusterShare/thingamajigs/julyin/genome_gbm_variant_calling/manta/b37/raw-manta/"
+FILT_DIR = "/share/ClusterShare/thingamajigs/julyin/genome_gbm_variant_calling/manta/b37/filtered-manta/"
 
 
-
-DIR = "/home/julyin/genome_gbm_variant_calling/strelka-snvs-indels/"
-SAMPLE_PDX = "strelka-G89controlDNA.dedup.realn.bam-vs-G89PDX.dedup.realn.bam"
-SAMPLE_PATIENT = "strelka-G89controlDNA-vs-G89HFMTissueDNA"
-OUT_DIR = "/home/julyin/genome_gbm_variant_calling/strelka_oncotator/" 
-
-#DB_DIR=/share/ClusterShare/software/contrib/julyin/oncotator/oncotator_v1_ds_June112014
-VAR_TYPE = ["snvs", "indels"]
-
-
-SAM_PDX_DIR = DIR + SAMPLE_PDX + "/myAnalysis/results/"
-SAM_PATIENT_DIR = DIR + SAMPLE_PATIENT + "/myAnalysis/results/"
+ONCO_DIR = "/share/ClusterShare/thingamajigs/julyin/genome_gbm_variant_calling/strelka/b37/oncotator-strelka/"
+VEP_DIR = "/share/ClusterShare/thingamajigs/julyin/genome_gbm_variant_calling/strelka/b37/vep-strelka/"
 
 
 rule all:
-    input: 
-        expand(OUT_DIR + "headerless.G89control.vs.G89PDX.passed.{type}.oncotator.maf", type=VAR_TYPE),
-        expand(OUT_DIR + "headerless.G89control.vs.G89HFMTissue.passed.{type}.oncotator.maf", type=VAR_TYPE)
-
-
-rule run_strelka:
     input:
-        normal =
-        g52 =
-        g53 =
+        expand(FILT_DIR + "{sample}/{sample}." + NORMAL + ".vs." + PRIMARY + "/filtered_somaticSV.vcf", sample = SAMPLE_PRIM_LIST),
+        expand(FILT_DIR + "{sample}/{sample}." + NORMAL + ".vs." + RECURRENT + "/filtered_somaticSV.vcf", sample = SAMPLE_RECUR_LIST)
+
+rule manta_prim:
+    input:
+        normal_bam = BAM_DIR + "{sample}." + NORMAL + ".dedup.realn.bam",
+        tumour_bam = BAM_DIR + "{sample}." + PRIMARY + ".dedup.realn.bam"
     output:
+        RAW_DIR + "{sample}/{sample}." + NORMAL + ".vs." + PRIMARY + "/results/variants/somaticSV.vcf"
+    params:
+        outdir = VCF_DIR + "{sample}/{sample}." + NORMAL + ".vs." + PRIMARY
     message:
-        """ [][][] Strelka variant calling of G52 and G53
+        """ [][][] Manta variant calling [][][]
         INPUTS:
         {input}
         OUTPUTS:
         {output}
         """
     shell: """
-        mkdir $WORK_DIR
-        cd $WORK_DIR
-        cp $STRELKA_INSTALL_DIR/etc/strelka_config_bwa_default.ini strelka_config_bwa_default.ini
-        $STRELKA_INSTALL_DIR/bin/configureStrelkaWorkflow.pl \
-            --normal=$NORMAL_PATH \
-            --tumor=$TUMOUR_PATH \
-            --ref=$REF_FILE \
-            --config=strelka_config_bwa_default.ini \
-            --output-dir=./myAnalysis
-        cd ./myAnalysis
-        make -j 8
+        bash /home/julyin/analysis/template_scripts/manta_snakemake/manta_sv_controlvnormal.sh \
+            {input.normal_bam} {input.tumour_bam} {config[refs][reference_human_g1kv37_decoy]} {params.outdir}
         """
 
-
-
-
-
-
-rule oncotator_PDX:
+rule filter_prim:
     input:
-        SAM_PDX_DIR + "passed.somatic.{type}.vcf"
+        RAW_DIR + "{sample}/{sample}." + NORMAL + ".vs." + PRIMARY + "/results/variants/somaticSV.vcf"
     output:
-        OUT_DIR + "G89control.vs.G89PDX.passed.{type}.oncotator.maf"
+        FILT_DIR + "{sample}/{sample}." + NORMAL + ".vs." + PRIMARY + "/filtered_somaticSV.vcf"
     message:
-        """ [][][] Oncotator annotation of G89control and PDX
+        """ [][][] Filter manta [][][]
         INPUTS:
         {input}
         OUTPUTS:
         {output}
         """
     shell: """
-    oncotator -i VCF --db-dir={config[db_path]} --canonical-tx-file={config[canonical_tx_file]} --output_format=TCGAMAF {input} {output} hg19
-    """
+        python /home/julyin/analysis/template_scripts/manta_snakemake/pinese_manta_svfilter.py \
+            --input {input} \
+            --output {output} \
+            --normal-n {sample} + NORMAL \
+            --tumour-t {sample} + PRIMARY \
+            --mintumourvaf 0.3
+        """
 
-rule oncotator_Patient:
+rule manta_recur:
     input:
-        SAM_PATIENT_DIR + "passed.somatic.{type}.vcf"
+        normal_bam = BAM_DIR + "{sample}." + NORMAL + ".dedup.realn.bam",
+        tumour_bam = BAM_DIR + "{sample}." + RECURRENT + ".dedup.realn.bam"
     output:
-        OUT_DIR + "G89control.vs.G89HFMTissue.passed.{type}.oncotator.maf"
+        RAW_DIR + "{sample}/{sample}." + NORMAL + ".vs." + RECURRENT + "/results/variants/somaticSV.vcf"
+    params:
+        outdir = VCF_DIR + "{sample}/{sample}." + NORMAL + ".vs." + RECURRENT
     message:
-        """ [][][] Oncotator annotation of G89control and patient
+        """ [][][] Manta variant calling [][][]
         INPUTS:
         {input}
         OUTPUTS:
         {output}
         """
     shell: """
-    oncotator -i VCF --db-dir={config[db_path]} --canonical-tx-file={config[canonical_tx_file]} --output_format=TCGAMAF {input} {output} hg19
-    """
+        bash /home/julyin/analysis/template_scripts/manta_snakemake/manta_sv_controlvnormal.sh \
+            {input.normal_bam} {input.tumour_bam} {config[refs][reference_human_g1kv37_decoy]} {params.outdir}
+        """
 
-
-rule remove_comment_lines:
+rule filter_recur:
     input:
-        OUT_DIR + "G89control.vs.{tumour}.passed.{type}.oncotator.maf"
+        RAW_DIR + "{sample}/{sample}." + NORMAL + ".vs." + RECURRENT + "/results/variants/somaticSV.vcf"
     output:
-        OUT_DIR + "headerless.G89control.vs.{tumour}.passed.{type}.oncotator.maf"
+        FILT_DIR + "{sample}/{sample}." + NORMAL + ".vs." + RECURRENT + "/filtered_somaticSV.vcf"
     message:
-        """ [][][] Remove headers in maf files
+        """ [][][] Filter manta [][][]
         INPUTS:
         {input}
         OUTPUTS:
         {output}
         """
     shell: """
-        sed '/^\#/d' {input} > {output} """
-        
+        python /home/julyin/analysis/template_scripts/manta_snakemake/pinese_manta_svfilter.py \
+            --input {input} \
+            --output {output} \
+            --normal-n {sample} + NORMAL \
+            --tumour-t {sample} + RECURRENT \
+            --mintumourvaf 0.3
+        """
+
+#============================
+
+rule cull_normal_oncotator:
+    input:
+        ONCO_DIR + "{sample}/{sample}." + NORMAL + ".vs." + TUMOUR + ".raw.{type}.oncotator.maf"
+    output:
+        ONCO_DIR + "{sample}/{sample}." + NORMAL + ".vs." + TUMOUR + ".{type}.oncotator.maf"
+    message:
+        """ [][][] Oncotator annotation [][][]
+        INPUTS:
+        {input}
+        OUTPUTS:
+        {output}
+        """
+    shell: """
+        grep -v 'NORMAL' {input} > {output}
+        """
+
+rule vep_annotation:
+    input:
+        VCF_DIR + "{sample}/{sample}." + NORMAL + ".vs." + TUMOUR + "/myAnalysis/results/passed.somatic.{type}.vcf"
+    output:
+        vep = VEP_DIR + "{sample}/{sample}." + NORMAL + ".vs." + TUMOUR + ".{type}.vep.vcf",
+        stats = VEP_DIR + "{sample}/{sample}." + NORMAL + ".vs." + TUMOUR + ".{type}.vep.stats.html"
+    message:
+        """ [][][] VEP annotation [][][]
+        INPUTS:
+        {input}
+        OUTPUTS:
+        {output}
+        """
+    shell: 
+        """
+        module load marcow/perl/5.14.2
+        module load gi/vep/76
+        module load gi/samtools/0.1.19
+        perl /share/ClusterShare/software/contrib/gi/vep/76/variant_effect_predictor.pl \
+             --cache \
+             --dir /share/ClusterShare/biodata/contrib/gi/vep \
+             --port 3337 \
+             --offline \
+             --input_file {input} \
+             --format vcf \
+             --output_file {output.vep} \
+             --vcf \
+             --stats_file {output.stats} \
+             --stats_text \
+             --force_overwrite \
+             --canonical \
+             --fork 32 \
+             --sift b \
+             --polyphen b \
+             --symbol \
+             --numbers \
+             --terms so \
+             --biotype \
+             --total_length \
+             --plugin LoF,human_ancestor_fa:/share/ClusterShare/biodata/contrib/gi/LOFTEE/1.0/human_ancestor.fa.rz --fields Consequenc
+        e,Codons,Amino_acids,Gene,SYMBOL,Feature,EXON,PolyPhen,SIFT,Protein_position,BIOTYPE,CANONICAL,Feature_type,cDNA_position,CDS_
+        position,Existing_variation,DISTANCE,STRAND,CLIN_SIG,LoF_flags,LoF_filter,LoF,RadialSVM_score,RadialSVM_pred,LR_score,LR_pred,
+        CADD_raw,CADD_phred,Reliability_index
+        """
 
 
-
-
-
-
-
-
-
+rule vaf_extraction:
+    input:
+        expand(VEP_DIR + "strelka-vep-" + NORMAL + ".vs.{sample}/{sample}.snvs.vep.vcf", sample = SAMPLE_LIST)
+        #g53 = VCF_DIR + "strelka-" + NORMAL + ".vs.G53.primary/myAnalysis/results/passed.somatic.snvs.vcf"
+    output:
+        "/home/julyin/genome_gbm_variant_calling/vaf/vaf.multicentric.G52.vs.G53.csv"
+    message:
+        """ [][][] VAF extraction [][][]
+        INPUTS:
+        {input}
+        OUTPUTS:
+        {output}
+        """
+    shell: """
+        /opt/perl/bin/perl /home/julyin/analysis/multicentric_G52_G53/strelka/VAF_Generator_modified.pl \
+            {input} {output}
+            """
 
 
